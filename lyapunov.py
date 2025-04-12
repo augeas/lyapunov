@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.10.15"
+__generated_with = "0.12.8"
 app = marimo.App(width="medium")
 
 
@@ -39,7 +39,10 @@ def _():
     import itertools
     from functools import partial
     import math
-    from multiprocessing import Pool, shared_memory
+    try:
+        from multiprocessing import Pool, shared_memory
+    except:
+        pass
     import os
     import subprocess as sp
     import sys
@@ -611,15 +614,7 @@ def _(
 
 
 @app.cell
-def _(
-    do_video,
-    mo,
-    render_video,
-    video_fname,
-    video_fps,
-    video_frames,
-    vs,
-):
+def _(do_video, mo, render_video, video_fname, video_fps, video_frames, vs):
     if do_video.value and mo.running_in_notebook():
         def vid_seq():
             with mo.status.progress_bar(total=video_frames) as prog:
