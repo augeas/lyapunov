@@ -257,7 +257,7 @@ def _(mo, palettes):
     y_rot_range = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.0, 4.0],
                                    label='B range')
     rad_box = mo.ui.slider(start=0.1, stop=1.0, step=0.05, value=0.25, label='CD radius')
-    rot_colour_box = mo.ui.dropdown(palettes, value='managua', label='palette')
+    rot_colour_box = mo.ui.dropdown(palettes, value='twilight', label='palette')
     play_pause = mo.ui.button(label='⏯', value=False, on_click=lambda v: not v)
     return (
         play_pause,
