@@ -136,7 +136,7 @@ def _(colormaps, mo):
 
     palettes = [name for name in cmap_names if name in colormaps]
 
-    colour_box = mo.ui.dropdown(palettes, value='managua', label='palette')
+    colour_box = mo.ui.dropdown(palettes, value='twilight', label='palette')
     return (
         cmap_names,
         colour_box,
