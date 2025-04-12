@@ -14,6 +14,7 @@ def _():
 def _(mo):
     mo.md(
         """
+        (See the [source-code](https://github.com/augeas/lyapunov).)
         # Lyapunov fractals
 
         The [Lyapunov Fractal](https://en.wikipedia.org/wiki/Lyapunov_fractal) is calculated
@@ -550,7 +551,10 @@ def _(sp):
 
 @app.cell
 def _(os):
-    __TOTAL_CORES__ = os.environ.get('OMP_NUM_THREADS', len(os.sched_getaffinity(0)))
+    try:
+        __TOTAL_CORES__ = os.environ.get('OMP_NUM_THREADS', len(os.sched_getaffinity(0)))
+    except:
+        __TOTAL_CORES__ = 1
     if __TOTAL_CORES__ > 2:
         __MAX_VID_SEQ_CORES__ =__TOTAL_CORES__ - 2
     else:
