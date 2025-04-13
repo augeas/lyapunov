@@ -508,7 +508,7 @@ def _(
                     """The job of turning the returned images is left to the calling process.
                     There's no point compressing the images when ffmpeg would have to uncompress
                     them afterwards."""
-                    render_image(out_map[out_name]).save(buff, format='PNG', compress_level=0)
+                    render_image(out_map[out_name], pal).save(buff, format='PNG', compress_level=0)
                     yield buff.getvalue()
 
         for shm in (seq_buff, x_buff, y_buff):
