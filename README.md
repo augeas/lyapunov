@@ -31,7 +31,7 @@ marimo edit
 [Pyodide](https://pyodide.org/en/stable/), you play with a web-app
 based on the code at [https://augeas.github.io/lyapunov](https://augeas.github.io/lyapunov).
 Since the code uses Numpy, Pillow and Matplotlib, all of which are packaged by default by [Pyodide](https://pyodide.org/en/stable/),
-there is not need to resort to [micropip](https://micropip.pyodide.org/en/latest/project/usage.html).
+there is no need to resort to [micropip](https://micropip.pyodide.org/en/latest/project/usage.html).
 
 It is not yet possible to use Marimo notebooks like regular Python modules directly, but if they are written
 with care, they can be converted to .py files that *can* be imported:
