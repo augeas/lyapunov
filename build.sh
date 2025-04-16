@@ -1,4 +1,4 @@
 git merge main
-rm index.html
-marimo export html-wasm lyapunov.py  -o index.html --mode run
+rm -r docs
+marimo export html-wasm lyapunov.py  -o docs --mode run
 
