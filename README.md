@@ -111,5 +111,5 @@ the chunk has been consumed. It is better to use the lazily-evaluated
 The [`ffmpeg`](https://ffmpeg.org/) process remains somewhat active, but the processes generating
 the images are constantly active.
  
-The script scales that it is worthwhile using 2-4 cores:
+The script scales such that it is worthwhile using 2-4 cores:
 ![benchmarks](img/benchmark.png)
