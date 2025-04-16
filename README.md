@@ -95,7 +95,7 @@ might not be ideal for larger images, and leaves [`ffmpeg`](https://ffmpeg.org/)
 decompressing the image again.
 
 "Explicit" being better than "Implicit", it may be better to pass Numpy arrays backed
-by [`multiporcessing.SharedMemory`](https://docs.python.org/3/library/multiprocessing.shared_memory.html)
+by [`multiprocessing.SharedMemory`](https://docs.python.org/3/library/multiprocessing.shared_memory.html)
 buffers. The IDs of the buffers and the shape of the array need to be passed to the child processes.
 Since one buffer will be needed to return each image, the sequence of images is divided
 into chunks, and a set of outpuf buffers is used in rotation.
