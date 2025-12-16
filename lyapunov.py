@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.12.8"
+__generated_with = "0.18.1"
 app = marimo.App(width="medium")
 
 
@@ -12,24 +12,22 @@ def _():
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        (See the [source-code](https://github.com/augeas/lyapunov).)
-        # Lyapunov fractals
+    mo.md("""
+    (See the [source-code](https://github.com/augeas/lyapunov).)
+    # Lyapunov fractals
 
-        The [Lyapunov Fractal](https://en.wikipedia.org/wiki/Lyapunov_fractal) is calculated
-        from repeated iterations of the [Logistic Map](https://en.wikipedia.org/wiki/Logistic_map):
+    The [Lyapunov Fractal](https://en.wikipedia.org/wiki/Lyapunov_fractal) is calculated
+    from repeated iterations of the [Logistic Map](https://en.wikipedia.org/wiki/Logistic_map):
 
-        $$ \Large{x_{n+1} = r_{n}x_{n}(x_{n}-1)} $$
+    $$ \Large{x_{n+1} = r_{n}x_{n}(1-x_{n})} $$
 
-        where at each iteration $r_{n}$ takes values from some repeated sequence, for 
-        example $AABAB$. For each point in an image $A$ and $B$ take the values of
-        the $x$ and $y$ coordinates. For a large number of iterations $N$, the Lyapunov
-        exponent $\lambda$ is found for each point, and coloured accordingly:
+    where at each iteration $r_{n}$ takes values from some repeated sequence, for
+    example $AABAB$. For each point in an image $A$ and $B$ take the values of
+    the $x$ and $y$ coordinates. For a large number of iterations $N$, the Lyapunov
+    exponent $\lambda$ is found for each point, and coloured accordingly:
 
-        $$ \Large{\lambda = \dfrac{1}{N}\sum_{n=1}^{N}|r_{n}(1-2x_{n})|} $$
-        """
-    )
+    $$ \Large{\lambda = \dfrac{1}{N}\sum_{n=1}^{N}|r_{n}(1-2x_{n})|} $$
+    """)
     return
 
 
@@ -47,7 +45,7 @@ def _():
     import os
     import subprocess as sp
     import sys
-    from typing import Iterable
+    from typing import Iterable, List
 
     from matplotlib import colormaps
     import numpy as np
@@ -55,13 +53,12 @@ def _():
     from PIL import Image
     return (
         Image,
-        Iterable,
+        List,
         Pool,
         colormaps,
         datetime,
         io,
         itertools,
-        math,
         np,
         npt,
         os,
@@ -74,21 +71,16 @@ def _():
 
 @app.cell
 def _(np, npt):
-    def seq_vector(seq: str, size: int=128) -> npt.ArrayLike:
-        """Take a string of letters and return a repeating array of ints."""
+    def seq_vector(seq: str) -> npt.ArrayLike:
+        """Take a string of letters and return an array of ints."""
         assert str.isalpha(seq)
-        vec = np.fromiter(map(ord, seq.upper()), dtype=np.int32) - 65
-        reps = size // len(seq)
-        if size % len(seq) == 0:
-            return np.tile(vec, reps)
-        else:
-            return np.tile(vec, reps + 1)[:size]
+        return np.fromiter(map(ord, seq.upper()), dtype=np.int32) - 65
     return (seq_vector,)
 
 
 @app.cell
-def _(np, npt):
-    def lyapunov(seq: npt.ArrayLike, *points: npt.NDArray) -> npt.NDArray:
+def _(List, np, npt):
+    def lyapunov(seq: npt.ArrayLike, n_its: int, *points: List[npt.NDArray]) -> npt.NDArray:
         """Compute a Lyapunov fractal.
 
         seq: Coefficient sequence as a Numpy array of ints in [0..N].
@@ -96,17 +88,18 @@ def _(np, npt):
         the coefficent value at each point in the image.
         """
         coeffs = np.stack(points)[seq]
-        # Somewhat profligate to stack up all the coefficients like that...
-        n_its = len(seq)
-        iterates = np.zeros(coeffs.shape)
-        iterates[0] = 0.5
+        seq_len = len(seq)
+        img_shape = coeffs.shape[1:3]
+        iterates = np.zeros((2,) + img_shape)
+        prev, next = (0, 1)
+        iterates[prev] = 0.5
+        img = np.zeros(img_shape)
         for i in range(1, n_its):
-            prev = iterates[i-1]
-            iterates[i] = coeffs[i] * prev * (1.0 - prev)
-        # ...but we *do* need them all at once to vectorize calculating the Lyapunov exponents:
-        return np.log(
-            np.abs(coeffs[1:] * (1.0 - 2 * iterates[1:]))
-        ).sum(axis=0) / (n_its-1)
+            r = coeffs[i % seq_len]
+            iterates[next] = r * iterates[prev] * (1.0 - iterates[prev])
+            img += np.log(np.abs(r * (1.0 - 2 * iterates[next])))
+            prev, next = next, prev
+        return img / (n_its-1)
     return (lyapunov,)
 
 
@@ -132,48 +125,41 @@ def _(Image, lyapunov, np, render_image, seq_vector):
         its: int=100, width: int=512, height: int=512,
         palette: str='twilight') -> Image.Image:
         """Compute a Lyapunov fractal and return it as a pillow image.
-    
+
         sequence: String of "A"s and "B"s, try "BBBBBBAAAAAA" for "Zircon Zity"...
         x_min, x_max, y_min, y_max: Image boundaries.
         its: Number of iterations, try 400 for sharper images.
         width, height: Image size in pixels.
         """
-        seq = seq_vector(sequence, its)
+        seq = seq_vector(sequence)
         a_coeff, b_coeff = np.meshgrid(
             np.linspace(x_min, x_max, width),
             np.linspace(y_max, y_min, height),
             indexing='xy'
         )
         return render_image(lyapunov(
-            seq, a_coeff, b_coeff),
+            seq, its, a_coeff, b_coeff),
             palette=palette)   
-    return (lyapunov_img,)
+    return
 
 
 @app.cell
 def _(colormaps, mo):
     seq_box = mo.ui.text(value='AABAB', label='coefficient sequence')
-    its_box = mo.ui.number(start=50, stop=400, step=50, value=100, 
+    its_box = mo.ui.number(start=20, stop=400, step=20, value=100, 
                            label="number of iterations")
-    x_img_slider = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.0, 4.0],
+    x_img_slider = mo.ui.range_slider(start=2.01, stop=3.99, step=0.1, value=[2.01, 3.99],
                                    label='x range')
-    y_img_slider = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.0, 4.0],
+    y_img_slider = mo.ui.range_slider(start=2.01, stop=3.99, step=0.1, value=[2.01, 3.99],
                                    label='y range')
     cmap_names = ['seismic', 'vanimo', 'managua', 'berlin', 'Spectral',
-        'twilight', 'ocean', 'cubehelix', 'turbo', 'plasma', 'magma']
+        'twilight', 'twilight_shifted', 'ocean', 'cubehelix', 'turbo', 'plasma',
+        'magma', 'PiYG']
 
     palettes = [name for name in cmap_names if name in colormaps]
 
     colour_box = mo.ui.dropdown(palettes, value='twilight', label='palette')
-    return (
-        cmap_names,
-        colour_box,
-        its_box,
-        palettes,
-        seq_box,
-        x_img_slider,
-        y_img_slider,
-    )
+    return colour_box, its_box, palettes, seq_box, x_img_slider, y_img_slider
 
 
 @app.cell
@@ -194,39 +180,30 @@ def _(
     img_x_min, img_x_max = x_img_slider.value
     img_y_min, img_y_max = y_img_slider.value
 
-    img_x_points, img_y_points = np.meshgrid(
-        np.linspace(img_x_min, img_x_max, __IMG_SIZE__),
-        np.linspace(img_y_max, img_y_min, __IMG_SIZE__),
-        indexing='xy'
-    )
-
+    if mo.running_in_notebook():
+        img_x_points, img_y_points = np.meshgrid(
+            np.linspace(img_x_min, img_x_max, __IMG_SIZE__),
+            np.linspace(img_y_max, img_y_min, __IMG_SIZE__),
+            indexing='xy'
+        )
+    else:
+        img_x_points = img_y_points = None
+    
     img_seq = seq_vector(
-        ''.join(filter(lambda char: char in 'AB', seq_box.value.upper())),
-        its_box.value
+        ''.join(filter(lambda char: char in 'AB', seq_box.value.upper()))
     )
 
     def ui_image():
         if mo.running_in_notebook():
              return render_image(lyapunov(
-                 img_seq, img_x_points, img_y_points),
+                 img_seq, its_box.value, img_x_points, img_y_points),
             palette=colour_box.value)
         else:
             # No point in generating an image for the UI if we're not in a notebook.
             return None
 
     img = ui_image()
-    return (
-        __IMG_SIZE__,
-        img,
-        img_seq,
-        img_x_max,
-        img_x_min,
-        img_x_points,
-        img_y_max,
-        img_y_min,
-        img_y_points,
-        ui_image,
-    )
+    return __IMG_SIZE__, img
 
 
 @app.cell
@@ -246,7 +223,9 @@ def _(colour_box, img, its_box, mo, seq_box, x_img_slider, y_img_slider):
 
 @app.cell
 def _(mo):
-    mo.md("""The repeated sequence of coeffecients can extended beyond $A$ and $B$. If a third, $C$, that varies over time is added, then an animation can be produced. More pleasingly, if there are $C$ and $D$ coefficients in a sequence, they can rotate in a circle so the animation can return to the start and repeat.""")
+    mo.md("""
+    The repeated sequence of coeffecients can extended beyond $A$ and $B$. If a third, $C$, that varies over time is added, then an animation can be produced. More pleasingly, if there are $C$ and $D$ coefficients in a sequence, they can rotate in a circle so the animation can return to the start and repeat.
+    """)
     return
 
 
@@ -280,9 +259,11 @@ def _(np, npt):
 @app.cell
 def _(mo, palettes):
     rot_seq_box = mo.ui.text(value='AACBABD', label='coefficient sequence')
-    x_rot_range = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.0, 4.0],
+    rot_its_box = mo.ui.number(start=20, stop=400, step=20, value=100, 
+                           label="number of iterations")
+    x_rot_range = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.01, 3.99],
                                    label='A range')
-    y_rot_range = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.0, 4.0],
+    y_rot_range = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.01, 3.99],
                                    label='B range')
     rad_box = mo.ui.slider(start=0.1, stop=1.0, step=0.05, value=0.25, label='CD radius')
     rot_colour_box = mo.ui.dropdown(palettes, value='twilight', label='palette')
@@ -291,6 +272,7 @@ def _(mo, palettes):
         play_pause,
         rad_box,
         rot_colour_box,
+        rot_its_box,
         rot_seq_box,
         x_rot_range,
         y_rot_range,
@@ -301,7 +283,7 @@ def _(mo, palettes):
 def _(mo, play_pause, rad_box):
     def tock():
         if play_pause.value:
-            return mo.ui.refresh(default_interval=1, options=[0.5, 1, 2])
+            return mo.ui.refresh(default_interval=0.25, options=[0.125, 0.25, 0.5, 1, 2])
         else:
             return ''
 
@@ -377,6 +359,7 @@ def _(
     rot_img_coeffs,
     rot_img_x_points,
     rot_img_y_points,
+    rot_its_box,
     rot_seq_box,
     rotation,
     seq_vector,
@@ -387,17 +370,17 @@ def _(
     )
 
     rot_img_seq = seq_vector(
-        ''.join(filter(lambda char: char in 'ABCD', rot_seq_box.value.upper())), 100
+        ''.join(filter(lambda char: char in 'ABCD', rot_seq_box.value.upper()))
     )
 
     if mo.running_in_notebook():
         rot_img = render_image(
-            lyapunov(rot_img_seq, rot_img_x_points, rot_img_y_points, rot_img_c, rot_img_d),
+            lyapunov(rot_img_seq, rot_its_box.value, rot_img_x_points, rot_img_y_points, rot_img_c, rot_img_d),
             palette=rot_colour_box.value
         )
     else:
         rot_img = None
-    return rot_img, rot_img_c, rot_img_d, rot_img_seq
+    return (rot_img,)
 
 
 @app.cell
@@ -442,9 +425,9 @@ def _(np, shared_memory):
 
 
 @app.cell
-def _(extra_coeffs, get_shared_np, lyapunov, sigmoid):
-    def lyapunov_mp(cd_out: tuple[tuple[float, float], str], shape: tuple[int, int],
-        its: int, seq_name: str, x_name: str, y_name: str):
+def _(extra_coeffs, get_shared_np, lyapunov, npt, sigmoid):
+    def lyapunov_mp(cd: npt.ArrayLike, shape: tuple[int, int],
+        its: int, seq: npt.ArrayLike, x_name: str, y_name: str):
         """Compute a Lyapunov fractal using arrays backed by shared memory.
 
         cd_out: Tuple that allows the function to be called by Pool.imap containing: 
@@ -455,17 +438,13 @@ def _(extra_coeffs, get_shared_np, lyapunov, sigmoid):
         seq_name: Name of a SharedMemory buffer pointing to the coefficient sequence array.
         x_name, y_name: Names of SharedMemory buffers pointing to the A and B coefficient arrays.
         """
-        cd, out_name = cd_out
-        seq_buff, seq_vec = get_shared_np((its,), dtype='int32', name=seq_name)
         x_buff, x_coeff = get_shared_np(shape, name=x_name)
         y_buff, y_coeff = get_shared_np(shape, name=y_name)
-        out_buff, out = get_shared_np(shape, name=out_name)
+        out_buff, out_img = get_shared_np(shape)
         c_coeff, d_coeff = extra_coeffs(cd, shape)
         # Don't use the "render_image" function, keep the sigmoid function inside the Pool:
-        out[:, :] = sigmoid(lyapunov(seq_vec, x_coeff, y_coeff, c_coeff, d_coeff))
-        for buff in (seq_buff, x_buff, y_buff, out_buff):
-            buff.close()
-        return out_name
+        out_img[:, :] = sigmoid(lyapunov(seq, its, x_coeff, y_coeff, c_coeff, d_coeff))
+        return out_buff.name
     return (lyapunov_mp,)
 
 
@@ -501,26 +480,15 @@ def _(
         """
 
         img_shape = (h, w)
-        """The sequence of images is divided into n_chunks chunks of size chunk_size,
-        each with a block of SharedMemory to hold each image before it is yielded.
-        pool_chunk_size images are computed by the Pool at a time.
-        """    
-        chunk_size = 8 * cores
-        n_chunks = n // chunk_size
-
-        # Reserve SharedMemory for the coefficient sequence and A, B coefficients:
-        seq_buff, seq_vec = get_shared_np((its,), 'int32')
+  
+        # Reserve SharedMemory for the A, B coefficients:
         x_buff, x_coeff = get_shared_np(img_shape)
         y_buff, y_coeff = get_shared_np(img_shape)
 
         x_coeff[:], y_coeff[:] = np.meshgrid(
             np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
         indexing='xy')
-        seq_vec[:] = seq_vector(seq, its)
-
-        # Reserve SharedMemory for the images.
-        out_buffs, out_arrays = zip(*[get_shared_np(img_shape) for _ in range(chunk_size)])
-        out_map = {buff.name: array for buff, array in zip(out_buffs, out_arrays)}
+        seq_vec = seq_vector(seq)
 
         cd_coeff = rot_coeffs(x, y, r, n)
 
@@ -529,37 +497,57 @@ def _(
         be serialized when the function is passed to the Pool."""
         lyap = partial(lyapunov_mp,
             shape=img_shape, its=its,
-            seq_name=seq_buff.name, x_name=x_buff.name, y_name=y_buff.name,
+            seq=seq_vec, x_name=x_buff.name, y_name=y_buff.name,
         )
 
         colours = colormaps[pal]
 
-        # Divide the C, D coefficients among the chunks.
-        chunks = np.array_split(cd_coeff, n_chunks)
-
         with Pool(cores) as pool:
-            for chunk in chunks:
-                for out_name in pool.imap(lyap, zip(chunk, out_map.keys())):
-                    buff = io.BytesIO()
-                    """The job of turning the returned arrays to images is left to the calling process.
-                    There's no point compressing the images when ffmpeg would have to uncompress
-                    them afterwards."""
-                    Image.fromarray(
-                        (255 * colours(out_map[out_name])).astype(np.uint8)
-                    ).save(buff, format='PNG', compress_level=0)
-                    yield buff.getvalue()
+            for out_name in pool.imap(lyap, cd_coeff, 1):
+                out_buff, out_img = get_shared_np(img_shape, name=out_name)
+                buff = io.BytesIO()
+                """The job of turning the returned arrays to images is left to the calling process.
+                There's no point compressing the images when ffmpeg would have to uncompress
+                them afterwards."""
+                Image.fromarray(
+                    (255 * colours(out_img)).astype(np.uint8)
+                ).save(buff, format='PNG', compress_level=0)
+                yield buff.getvalue()
+                out_buff.close()
+                out_buff.unlink()
 
-        for shm in (seq_buff, x_buff, y_buff):
+        for shm in (x_buff, y_buff):
             shm.close()
             shm.unlink
-
-        for shm in out_buffs:
-            shm.close()
-            shm.unlink()
 
         # Need to yield something so that the SharedMemory is freed.
         yield None
     return (video_seq_mp,)
+
+
+@app.cell
+def _(extra_coeffs, io, lyapunov, np, render_image, rot_coeffs, seq_vector):
+    def video_seq(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
+        x: float, y: float, r: float, n: int,
+        its: int=100, pal: str='managua', w: int=512, h: int=512):
+
+        img_shape = (h, w)
+
+        x_coeff, y_coeff = np.meshgrid(
+            np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
+        indexing='xy')
+    
+        seq_vec = seq_vector(seq)
+
+        cd_coeff = (extra_coeffs(cd, img_shape) for cd in rot_coeffs(x, y, r, n))
+
+        images = (lyapunov(seq_vec, its, x_coeff, y_coeff, *cd) for cd in cd_coeff)
+
+        for img in images:
+            buff = io.BytesIO()
+            render_image(img, pal).save(buff, format='PNG', compress_level=0)
+            yield buff.getvalue()  
+    return (video_seq,)
 
 
 @app.cell
@@ -572,7 +560,7 @@ def _(sp):
         """
         ffmpeg_cmd = [
             'ffmpeg', '-threads', '1', '-f', 'image2pipe', '-vcodec', 'png', '-r', str(fps),
-            '-i', '-', '-vcodec', 'libx264', '-q:a', '0', fname
+            '-i', '-', '-vcodec', 'libx264', '-q:a', '0', '-threads', '1', fname
         ]
         if quiet:
             ffmpeg_out = sp.DEVNULL
@@ -594,7 +582,7 @@ def _(os):
         __MAX_VID_SEQ_CORES__ =__TOTAL_CORES__ - 2
     else:
         __MAX_VID_SEQ_CORES__ = 1
-    return __MAX_VID_SEQ_CORES__, __TOTAL_CORES__
+    return (__MAX_VID_SEQ_CORES__,)
 
 
 @app.cell
@@ -653,7 +641,7 @@ def _(
         )
     else:
         vs = []
-    return vid_height, vid_width, video_fps, video_frames, vs
+    return video_fps, video_frames, vs
 
 
 @app.cell
@@ -665,7 +653,7 @@ def _(do_video, mo, render_video, video_fname, video_fps, video_frames, vs):
                     yield frame
                     prog.update()
         render_video(video_fname.value, vid_seq(), fps=video_fps)
-    return (vid_seq,)
+    return
 
 
 @app.cell
@@ -691,7 +679,7 @@ def _(
         ]
 
     mo.vstack(video_ui, align='center')
-    return (video_ui,)
+    return
 
 
 @app.cell
@@ -710,7 +698,7 @@ def _(__MAX_VID_SEQ_CORES__):
 
 
 @app.cell
-def _(__DEFAULT_ARGS__, datetime, mo, render_video, video_seq_mp):
+def _(__DEFAULT_ARGS__, datetime, mo, render_video, video_seq, video_seq_mp):
     # If this is being run as a script:
     if not mo.running_in_notebook():
         try:
@@ -734,37 +722,19 @@ def _(__DEFAULT_ARGS__, datetime, mo, render_video, video_seq_mp):
         its, cores, pal, width, height = map(get_arg, ['its', 'cores', 'pal', 'width', 'height'])
 
         if not exported:
-            img_sq = video_seq_mp(sq, xmin, xmax, ymin, ymax, xc, yc, rad, n_frames, cores,
-                its=its, pal=pal, w=width, h=height)
+            if cores > 1:
+                img_sq = video_seq_mp(sq, xmin, xmax, ymin, ymax, xc, yc, rad, n_frames, cores,
+                    its=its, pal=pal, w=width, h=height)
+            else:
+                img_sq = video_seq(sq, xmin, xmax, ymin, ymax, xc, yc, rad, n_frames,
+                    its=its, pal=pal, w=width, h=height)
 
             right_now = datetime.now()
             render_video(fname, img_sq, fps=fps, quiet=False)
             print('Wrote {} in {}s.'.format(
                 fname, (datetime.now()-right_now).total_seconds()
             ))
-    return (
-        args,
-        cores,
-        exported,
-        fname,
-        fps,
-        get_arg,
-        height,
-        img_sq,
-        its,
-        n_frames,
-        pal,
-        rad,
-        right_now,
-        sq,
-        width,
-        xc,
-        xmax,
-        xmin,
-        yc,
-        ymax,
-        ymin,
-    )
+    return
 
 
 if __name__ == "__main__":
