@@ -1,5 +1,6 @@
 marimo
 matplotlib
+multiprocess
 numpy
 pillow
 
