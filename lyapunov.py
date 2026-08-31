@@ -66,15 +66,13 @@ def lyapunov(seq: npt.ArrayLike, n_its: int, *points: list[npt.NDArray]) -> npt.
     coeffs = np.stack(points)[seq]
     seq_len = len(seq)
     img_shape = coeffs.shape[1:3]
-    iterates = np.zeros((2,) + img_shape)
-    prev, next = (0, 1)
-    iterates[prev] = 0.5
+    prev = 0.5 * np.ones(img_shape, dtype=np.float32)
     img = np.zeros(img_shape)
     for i in range(1, n_its):
         r = coeffs[i % seq_len]
-        iterates[next] = r * iterates[prev] * (1.0 - iterates[prev])
-        img += np.log(np.abs(r * (1.0 - 2 * iterates[next])))
-        prev, next = next, prev
+        nxt = r * prev * (1.0 - prev)
+        img += np.log(np.abs(r * (1.0 - 2 * nxt)))
+        prev = nxt
     return img / (n_its - 1)
 
 
@@ -186,32 +184,31 @@ def _():
     return
 
 
-@app.cell
-def _():
-    def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
-        """Return an array of n pairs of coefficients centred at (x, y) with radius r."""
-        theta = np.linspace(-np.pi, np.pi, n)
-        rot = np.zeros(shape=(n, 2, 2))
-        rot[:, 0, 0] = np.cos(theta)
-        rot[:, 0, 1] = np.sin(theta)
-        rot[:, 1, 0] = -rot[:, 0, 1]
-        rot[:, 1, 1] = rot[:, 0, 0]
-        point = np.zeros(shape=(1, 1, 2))
-        point[:, :, -1] = radius
-        return (
-            np.array([x, y]).reshape((1, 1, 2)) + point @ rot
-        ).reshape(n, 2)
+@app.function
+def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
+    """Return an array of n pairs of coefficients centred at (x, y) with radius r."""
+    theta = np.linspace(-np.pi, np.pi, n)
+    rot = np.zeros(shape=(n, 2, 2))
+    rot[:, 0, 0] = np.cos(theta)
+    rot[:, 0, 1] = np.sin(theta)
+    rot[:, 1, 0] = -rot[:, 0, 1]
+    rot[:, 1, 1] = rot[:, 0, 0]
+    point = np.zeros(shape=(1, 1, 2))
+    point[:, :, -1] = radius
+    return (
+        np.array([x, y]).reshape((1, 1, 2)) + point @ rot
+    ).reshape(n, 2)
 
-    def extra_coeffs(point: npt.ArrayLike, shape: tuple[int, int]) -> tuple[npt.NDArray, npt.NDArray]:
-        """Return two arrays of coefficients with the given shape"""
-        c, d = point
-        c_coeff = np.zeros(shape)
-        c_coeff.fill(c)
-        d_coeff = np.zeros(shape)
-        d_coeff.fill(d)
-        return (c_coeff, d_coeff)
 
-    return extra_coeffs, rot_coeffs
+@app.function
+def extra_coeffs(point: npt.ArrayLike, shape: tuple[int, int]) -> tuple[npt.NDArray, npt.NDArray]:
+    """Return two arrays of coefficients with the given shape"""
+    c, d = point
+    c_coeff = np.zeros(shape)
+    c_coeff.fill(c)
+    d_coeff = np.zeros(shape)
+    d_coeff.fill(d)
+    return (c_coeff, d_coeff)
 
 
 @app.cell
@@ -258,7 +255,6 @@ def _(
     c_centre_slider,
     d_centre_slider,
     rad_box,
-    rot_coeffs,
     tock,
     x_rot_range,
     y_rot_range,
@@ -306,7 +302,6 @@ def _(cycle, play_pause, rot_img_slider, tick):
 
 @app.cell
 def _(
-    extra_coeffs,
     rot_colour_box,
     rot_img_coeffs,
     rot_img_x_points,
@@ -375,118 +370,111 @@ def get_shared_np(shape: tuple[int, ...], dtype: str='float64', name=None):
     return buff, arr
 
 
-@app.cell
-def _(extra_coeffs):
-    def lyapunov_mp(cd_out: tuple[tuple[float, float], str], shape: tuple[int, int],
-        its: int, seq_name: str, seq_len: int, x_name: str, y_name: str):
-        """Compute a Lyapunov fractal using arrays backed by shared memory.
+@app.function
+def lyapunov_mp(cd: tuple[float, float], shape: tuple[int, int],
+    seq, its: int, x_name: str, y_name: str):
+    """Compute a Lyapunov fractal using arrays backed by shared memory.
 
-        cd_out: Tuple that allows the function to be called by Pool.imap containing: 
-            cd: Tuple of floats giving the C, D coefficients constant across the image.
-            out_name: Name of a SharedMemory buffer to hold the Lyapunov exponents.
-        shape: Tuple of ints giving the shape of the A, B coefficient and output arrays.
-        its: Number of iterations.
-        seq_name: Name of a SharedMemory buffer pointing to the coefficient sequence array.
-        seq_len: Length of the sequence array.
-        x_name, y_name: Names of SharedMemory buffers pointing to the A and B coefficient arrays.
-        """
-        cd, out_name = cd_out
-        seq_buff, seq_vec = get_shared_np((seq_len,), dtype='int32', name=seq_name)
-        x_buff, x_coeff = get_shared_np(shape, name=x_name)
-        y_buff, y_coeff = get_shared_np(shape, name=y_name)
-        out_buff, out = get_shared_np(shape, name=out_name)
-        c_coeff, d_coeff = extra_coeffs(cd, shape)
-        # Don't use the "render_image" function, keep the sigmoid function inside the Pool:
-        out[:, :] = sigmoid(lyapunov(seq_vec, its, x_coeff, y_coeff, c_coeff, d_coeff))
-        for buff in (seq_buff, x_buff, y_buff, out_buff):
-            buff.close()
-        return out_name
-
-    return (lyapunov_mp,)
+    cd_out: Tuple that allows the function to be called by Pool.imap containing: 
+        cd: Tuple of floats giving the C, D coefficients constant across the image.
+        out_name: Name of a SharedMemory buffer to hold the Lyapunov exponents.
+    shape: Tuple of ints giving the shape of the A, B coefficient and output arrays.
+    seq:
+    its: Number of iterations.
+    x_name, y_name: Names of SharedMemory buffers pointing to the A and B coefficient arrays.
+    """
+    x_buff, x_coeff = get_shared_np(shape, name=x_name)
+    y_buff, y_coeff = get_shared_np(shape, name=y_name)
+    out_buff, out = get_shared_np(shape)
+    c_coeff, d_coeff = extra_coeffs(cd, shape)
+    # Don't use the "render_image" function, keep the sigmoid function inside the Pool:
+    out[:, :] = sigmoid(lyapunov(seq, its, x_coeff, y_coeff, c_coeff, d_coeff))
+    for buff in (x_buff, y_buff, out_buff):
+        buff.close()
+    return out_buff.name
 
 
-@app.cell
-def _(lyapunov_mp, rot_coeffs):
-    def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
-        x: float, y: float, r: float, n: int,
-        cores: int,
-        its: int=100, pal: str='managua', w: int=512, h: int=512):
-        """Yield an animated sequence of Lyapunov images using multiprocessing and SharedMemory.
+@app.function
+def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
+    x: float, y: float, r: float, n: int,
+    cores: int,
+    its: int=100, pal: str='managua', w: int=512, h: int=512):
+    """Yield an animated sequence of Lyapunov images using multiprocessing and SharedMemory.
 
-        seq: String representing the repeating coefficient sequence, e.g: "AACBABD".
-        x_mi, y_mi, x_mx, y_mx: Floats describing the boundaries of the images, the ranges
-        of the A and B coefficients.
-        x, y, r: Floats giving the centre and radius of a circle on which the C, D coefficients lie.
-        n: Number of points around the circle, the number of frames.
-        cores: Number of cores to use in the Pool, not including the calling process which
-        compresses the image and the ffmpeg process that consumes them.
-        its: Number of iterations for each image.
-        pal: Name of the Matplotlib palette to use.
-        w, h: Image width and height.
-        """
+    seq: String representing the repeating coefficient sequence, e.g: "AACBABD".
+    x_mi, y_mi, x_mx, y_mx: Floats describing the boundaries of the images, the ranges
+    of the A and B coefficients.
+    x, y, r: Floats giving the centre and radius of a circle on which the C, D coefficients lie.
+    n: Number of points around the circle, the number of frames.
+    cores: Number of cores to use in the Pool, not including the calling process which
+    compresses the image and the ffmpeg process that consumes them.
+    its: Number of iterations for each image.
+    pal: Name of the Matplotlib palette to use.
+    w, h: Image width and height.
+    """
 
-        img_shape = (h, w)
-        """The sequence of images is divided into n_chunks chunks of size chunk_size,
-        each with a block of SharedMemory to hold each image before it is yielded.
-        pool_chunk_size images are computed by the Pool at a time.
-        """    
-        chunk_size = 8 * cores
-        n_chunks = n // chunk_size
+    img_shape = (h, w)  
+    chunk_size = 16 * cores
 
-        # Reserve SharedMemory for the coefficient sequence and A, B coefficients:
-        seq_buff, seq_vec = get_shared_np((len(seq),), 'int32')
-        x_buff, x_coeff = get_shared_np(img_shape)
-        y_buff, y_coeff = get_shared_np(img_shape)
+    # Reserve SharedMemory for the A, B coefficients:
+    x_buff, x_coeff = get_shared_np(img_shape)
+    y_buff, y_coeff = get_shared_np(img_shape)
 
-        x_coeff[:], y_coeff[:] = np.meshgrid(
-            np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
-        indexing='xy')
-        seq_vec[:] = seq_vector(seq)
+    x_coeff[:], y_coeff[:] = np.meshgrid(
+        np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
+    indexing='xy')
+    seq_vec = seq_vector(seq)
+    cd_coeff = rot_coeffs(x, y, r, n)
 
-        # Reserve SharedMemory for the images.
-        out_buffs, out_arrays = zip(*[get_shared_np(img_shape) for _ in range(chunk_size)])
-        out_map = {buff.name: array for buff, array in zip(out_buffs, out_arrays)}
+    """All the arguments of lyapunov_mp remain constant, except for the C, D coefficients
+    and the name of the output buffer to hold the image. Thus, no large numpy arrays will
+    be serialized when the function is passed to the Pool."""
+    lyap = partial(lyapunov_mp,
+        shape=img_shape, seq=seq_vec, its=its, 
+        x_name=x_buff.name, y_name=y_buff.name,
+    )
 
-        cd_coeff = rot_coeffs(x, y, r, n)
+    colours = colormaps[pal]
 
-        """All the arguments of lyapunov_mp remain constant, except for the C, D coefficients
-        and the name of the output buffer to hold the image. Thus, no large numpy arrays will
-        be serialized when the function is passed to the Pool."""
-        lyap = partial(lyapunov_mp,
-            shape=img_shape, its=its,
-            seq_name=seq_buff.name, seq_len=len(seq),
-            x_name=x_buff.name, y_name=y_buff.name,
-        )
+    with Pool(cores) as pool:
+        for out_name in pool.imap(lyap, map(tuple, cd_coeff), chunksize=chunk_size):
+            out_buff, out = get_shared_np(img_shape, name=out_name)
+            buff = io.BytesIO()
+            """The job of turning the returned arrays to images is left to the calling process.
+            There's no point compressing the images when ffmpeg would have to uncompress
+            them afterwards."""
+            Image.fromarray(
+                (255 * colours(out)).astype(np.uint8)
+            ).save(buff, format='PNG', compress_level=0)
+            yield buff.getvalue()
+            out_buff.close()
+            out_buff.unlink()
 
-        colours = colormaps[pal]
+    for shm in (x_buff, y_buff):
+        shm.close()
+        shm.unlink
 
-        # Divide the C, D coefficients among the chunks.
-        chunks = np.array_split(cd_coeff, n_chunks)
+    # Need to yield something so that the SharedMemory is freed.
+    yield None
 
-        with Pool(cores) as pool:
-            for chunk in chunks:
-                for out_name in pool.imap(lyap, zip(chunk, out_map.keys())):
-                    buff = io.BytesIO()
-                    """The job of turning the returned arrays to images is left to the calling process.
-                    There's no point compressing the images when ffmpeg would have to uncompress
-                    them afterwards."""
-                    Image.fromarray(
-                        (255 * colours(out_map[out_name])).astype(np.uint8)
-                    ).save(buff, format='PNG', compress_level=0)
-                    yield buff.getvalue()
 
-        for shm in (seq_buff, x_buff, y_buff):
-            shm.close()
-            shm.unlink
+@app.function
+def video_seq(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
+    x: float, y: float, r: float, n: int,
+    its: int=100, pal: str='managua', w: int=512, h: int=512):
 
-        for shm in out_buffs:
-            shm.close()
-            shm.unlink()
+    x_coeff, y_coeff = np.meshgrid(
+        np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
+    indexing='xy')
+    seq_vec = seq_vector(seq)
 
-        # Need to yield something so that the SharedMemory is freed.
-        yield None
-
-    return (video_seq_mp,)
+    for point in rot_coeffs(x, y, r, n):
+        c_coeff, d_coeff = extra_coeffs(point, x_coeff.shape)
+        buff = io.BytesIO()
+        render_image(
+            lyapunov(seq_vec, its, x_coeff, y_coeff, c_coeff, d_coeff),
+        palette=pal).save(buff, format='PNG', compress_level=0)
+        yield buff.getvalue()
 
 
 @app.function
@@ -560,7 +548,6 @@ def _(
     rot_y_max,
     rot_y_min,
     vid_size_dropdown,
-    video_seq_mp,
 ):
     video_fps = int(fps_dropdown.value)
     video_frames = duration_slider.value * video_fps
@@ -632,7 +619,7 @@ def _(MAX_VID_SEQ_CORES):
 
 
 @app.cell
-def _(DEFAULT_ARGS, video_seq_mp):
+def _(DEFAULT_ARGS):
     # If this is being run as a script:
     if not mo.running_in_notebook():
         args = mo.cli_args()
@@ -651,8 +638,12 @@ def _(DEFAULT_ARGS, video_seq_mp):
 
         its, cores, pal, width, height = map(get_arg, ['its', 'cores', 'pal', 'width', 'height'])
 
-        img_sq = video_seq_mp(sq, xmin, xmax, ymin, ymax, xc, yc, rad, n_frames, cores,
-            its=its, pal=pal, w=width, h=height)
+        if cores > 1:
+            img_sq = video_seq_mp(sq, xmin, xmax, ymin, ymax, xc, yc, rad, n_frames, cores,
+                its=its, pal=pal, w=width, h=height)
+        else:
+            img_sq = video_seq(sq, xmin, xmax, ymin, ymax, xc, yc, rad, n_frames,
+                its=its, pal=pal, w=width, h=height)
 
         right_now = datetime.now()
         render_video(fname, img_sq, fps=fps, quiet=False)
