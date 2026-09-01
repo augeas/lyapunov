@@ -10,7 +10,6 @@ with app.setup:
     import io
     import itertools
     from functools import partial
-    import math
     import os
     import subprocess as sp
     import sys
@@ -18,12 +17,20 @@ with app.setup:
 
     from matplotlib import colormaps
     try:
-        from multiprocess import Pool, shared_memory
+        from multiprocess import Pool, set_start_method, shared_memory
     except:
         pass
-    import numpy as np
+    try:
+        import jax.numpy as np
+        GOT_JAX = True
+    except:
+        import numpy as np
+        GOT_JAX = False
     from numpy import typing as npt
     from PIL import Image
+
+    IMG_SIZE = 400
+    SMALL = 0.000001
 
 
 @app.cell
@@ -51,7 +58,7 @@ def _():
 def seq_vector(seq: str) -> npt.ArrayLike:
     """Take a string of letters and return an array of ints."""
     assert str.isalpha(seq)
-    return np.fromiter(map(ord, seq.upper()), dtype=np.int32) - 65
+    return np.array(list(map(ord, seq.upper())), dtype=np.int32) - 65
 
 
 @app.function
@@ -111,9 +118,6 @@ def _():
 
 @app.cell
 def _(colour_box, its_box, seq_box, x_img_slider, y_img_slider):
-    IMG_SIZE = 400
-    SMALL = 0.000001
-
     img_x_min, img_x_max = x_img_slider.value
     img_y_min, img_y_max = y_img_slider.value
 
@@ -134,7 +138,7 @@ def _(colour_box, its_box, seq_box, x_img_slider, y_img_slider):
         )
     else:
         img = None
-    return IMG_SIZE, img
+    return (img,)
 
 
 @app.cell
@@ -188,13 +192,13 @@ def _():
 def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
     """Return an array of n pairs of coefficients centred at (x, y) with radius r."""
     theta = np.linspace(-np.pi, np.pi, n)
-    rot = np.zeros(shape=(n, 2, 2))
-    rot[:, 0, 0] = np.cos(theta)
-    rot[:, 0, 1] = np.sin(theta)
-    rot[:, 1, 0] = -rot[:, 0, 1]
-    rot[:, 1, 1] = rot[:, 0, 0]
-    point = np.zeros(shape=(1, 1, 2))
-    point[:, :, -1] = radius
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+    rot = np.array([
+        [cos_theta, sin_theta],
+        [-sin_theta, cos_theta]
+    ]).reshape((n, 2, 2))
+    point = np.array([[[0, radius]]], dtype=np.float32)
     return (
         np.array([x, y]).reshape((1, 1, 2)) + point @ rot
     ).reshape(n, 2)
@@ -204,10 +208,8 @@ def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
 def extra_coeffs(point: npt.ArrayLike, shape: tuple[int, int]) -> tuple[npt.NDArray, npt.NDArray]:
     """Return two arrays of coefficients with the given shape"""
     c, d = point
-    c_coeff = np.zeros(shape)
-    c_coeff.fill(c)
-    d_coeff = np.zeros(shape)
-    d_coeff.fill(d)
+    c_coeff = c * np.ones(shape)
+    d_coeff = d * np.ones(shape)
     return (c_coeff, d_coeff)
 
 
@@ -251,7 +253,6 @@ def _(play_pause, rad_box):
 
 @app.cell
 def _(
-    IMG_SIZE,
     c_centre_slider,
     d_centre_slider,
     rad_box,
@@ -294,7 +295,7 @@ def _(
 def _(cycle, play_pause, rot_img_slider, tick):
     tick
     if play_pause.value:
-        rotation = cycle.__next__()
+        rotation = next(cycle)
     else:
         rotation = rot_img_slider.value
     return (rotation,)
@@ -361,13 +362,22 @@ def get_shared_np(shape: tuple[int, ...], dtype: str='float64', name=None):
     """Return a SharedMemory instance, and a numpy array of the given
     shape that points to it."""
     dtype = np.dtype(dtype)
-    size=dtype.itemsize * np.prod(shape)
+    size = dtype.itemsize * np.prod(np.array(shape))
     if name is None:
         buff = shared_memory.SharedMemory(create=True, size=size)
     else:
         buff = shared_memory.SharedMemory(name=name, create=False, size=size)
     arr = np.ndarray(shape, dtype, buffer=buff.buf)
     return buff, arr
+
+
+@app.function
+def array_to_shared(arr):
+    raw = arr.tobytes() 
+    size = len(raw)
+    buff = shared_memory.SharedMemory(create=True, size=size)
+    buff.buf[:size] = raw
+    return buff
 
 
 @app.function
@@ -385,10 +395,11 @@ def lyapunov_mp(cd: tuple[float, float], shape: tuple[int, int],
     """
     x_buff, x_coeff = get_shared_np(shape, name=x_name)
     y_buff, y_coeff = get_shared_np(shape, name=y_name)
-    out_buff, out = get_shared_np(shape)
     c_coeff, d_coeff = extra_coeffs(cd, shape)
     # Don't use the "render_image" function, keep the sigmoid function inside the Pool:
-    out[:, :] = sigmoid(lyapunov(seq, its, x_coeff, y_coeff, c_coeff, d_coeff))
+    out_buff = array_to_shared (sigmoid(
+        lyapunov(seq, its, x_coeff, y_coeff, c_coeff, d_coeff)
+    ))
     for buff in (x_buff, y_buff, out_buff):
         buff.close()
     return out_buff.name
@@ -413,16 +424,14 @@ def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
     w, h: Image width and height.
     """
 
-    img_shape = (h, w)  
+    img_shape = (h, w)
     chunk_size = 16 * cores
 
     # Reserve SharedMemory for the A, B coefficients:
-    x_buff, x_coeff = get_shared_np(img_shape)
-    y_buff, y_coeff = get_shared_np(img_shape)
-
-    x_coeff[:], y_coeff[:] = np.meshgrid(
+    x_buff, y_buff = map(array_to_shared, np.meshgrid(
         np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
-    indexing='xy')
+    indexing='xy'))
+
     seq_vec = seq_vector(seq)
     cd_coeff = rot_coeffs(x, y, r, n)
 
@@ -638,7 +647,7 @@ def _(DEFAULT_ARGS):
 
         its, cores, pal, width, height = map(get_arg, ['its', 'cores', 'pal', 'width', 'height'])
 
-        if cores > 1:
+        if cores > 1 and not GOT_JAX:
             img_sq = video_seq_mp(sq, xmin, xmax, ymin, ymax, xc, yc, rad, n_frames, cores,
                 its=its, pal=pal, w=width, h=height)
         else:
