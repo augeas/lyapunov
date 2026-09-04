@@ -4,8 +4,6 @@ __generated_with = "0.23.16"
 app = marimo.App(width="medium")
 
 with app.setup:
-    import marimo as mo
-
     from datetime import datetime
     import io
     import itertools
@@ -13,24 +11,23 @@ with app.setup:
     import os
     import subprocess as sp
     import sys
-    from typing import Iterable
+    from typing import Generator, List, Tuple
 
     from matplotlib import colormaps
+    import marimo as mo
     try:
         from multiprocess import Pool, set_start_method, shared_memory
-    except:
+    except ModuleNotFoundError:
+        # Can't use mp in WASM anyway...
         pass
     try:
         import jax.numpy as np
         GOT_JAX = True
-    except:
+    except ModuleNotFoundError:
         import numpy as np
         GOT_JAX = False
     from numpy import typing as npt
     from PIL import Image
-
-    IMG_SIZE = 400
-    SMALL = 0.000001
 
 
 @app.cell
@@ -62,7 +59,7 @@ def seq_vector(seq: str) -> npt.ArrayLike:
 
 
 @app.function
-def lyapunov(seq: npt.ArrayLike, n_its: int, *points: list[npt.NDArray]) -> npt.NDArray:
+def lyapunov(seq: npt.ArrayLike, n_its: int, *points: List[npt.NDArray]) -> npt.NDArray:
     """Compute a Lyapunov fractal.
 
     seq: Coefficient sequence as a Numpy array of ints in [0..N-1].
@@ -101,7 +98,7 @@ def render_image(img: npt.NDArray, palette: str='Spectral') -> Image.Image:
 @app.cell
 def _():
     seq_box = mo.ui.text(value='AABAB', label='coefficient sequence')
-    its_box = mo.ui.number(start=50, stop=400, step=50, value=100, 
+    its_box = mo.ui.number(start=50, stop=400, step=50, value=100,
                            label="number of iterations")
     x_img_slider = mo.ui.range_slider(start=2.0, stop=4.0, step=0.1, value=[2.0, 4.0],
                                    label='x range')
@@ -118,6 +115,9 @@ def _():
 
 @app.cell
 def _(colour_box, its_box, seq_box, x_img_slider, y_img_slider):
+    IMG_SIZE = 400
+    SMALL = 0.000001
+
     img_x_min, img_x_max = x_img_slider.value
     img_y_min, img_y_max = y_img_slider.value
 
@@ -138,7 +138,7 @@ def _(colour_box, its_box, seq_box, x_img_slider, y_img_slider):
         )
     else:
         img = None
-    return (img,)
+    return IMG_SIZE, img
 
 
 @app.cell
@@ -195,9 +195,9 @@ def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
     rot = np.array([
-        [cos_theta, sin_theta],
-        [-sin_theta, cos_theta]
-    ]).reshape((n, 2, 2))
+        [cos_theta, -sin_theta],
+        [sin_theta, cos_theta]
+    ]).T.reshape((n, 2, 2))
     point = np.array([[[0, radius]]], dtype=np.float32)
     return (
         np.array([x, y]).reshape((1, 1, 2)) + point @ rot
@@ -205,7 +205,7 @@ def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
 
 
 @app.function
-def extra_coeffs(point: npt.ArrayLike, shape: tuple[int, int]) -> tuple[npt.NDArray, npt.NDArray]:
+def extra_coeffs(point: npt.ArrayLike, shape: Tuple[int, int]) -> Tuple[npt.NDArray, npt.NDArray]:
     """Return two arrays of coefficients with the given shape"""
     c, d = point
     c_coeff = c * np.ones(shape)
@@ -241,8 +241,6 @@ def _(play_pause, rad_box):
     def tock():
         if play_pause.value:
             return mo.ui.refresh(default_interval='1s', options=['0.25s', '0.5s', '1s', '2s'])
-        else:
-            return ''
 
     c_centre_slider = mo.ui.slider(start=2+rad_box.value, stop=4-rad_box.value,
                                    step=0.05, value=3, label='C centre')
@@ -253,6 +251,7 @@ def _(play_pause, rad_box):
 
 @app.cell
 def _(
+    IMG_SIZE,
     c_centre_slider,
     d_centre_slider,
     rad_box,
@@ -358,9 +357,11 @@ def _(
 
 
 @app.function
-def get_shared_np(shape: tuple[int, ...], dtype: str='float64', name=None):
+def get_shared_np(shape: Tuple[int, ...], dtype: str='float32',
+    name: str=None) -> Tuple[shared_memory.SharedMemory, npt.ArrayLike]:
     """Return a SharedMemory instance, and a numpy array of the given
-    shape that points to it."""
+    shape and dtype that points to it. If name is given, retrieve an
+    existing SharedMemort object."""
     dtype = np.dtype(dtype)
     size = dtype.itemsize * np.prod(np.array(shape))
     if name is None:
@@ -372,8 +373,9 @@ def get_shared_np(shape: tuple[int, ...], dtype: str='float64', name=None):
 
 
 @app.function
-def array_to_shared(arr):
-    raw = arr.tobytes() 
+def array_to_shared(arr: npt.ArrayLike) -> shared_memory.SharedMemory:
+    """Return a SharedMemory instance that points to a given numpy array"""
+    raw = arr.tobytes()
     size = len(raw)
     buff = shared_memory.SharedMemory(create=True, size=size)
     buff.buf[:size] = raw
@@ -381,8 +383,8 @@ def array_to_shared(arr):
 
 
 @app.function
-def lyapunov_mp(cd: tuple[float, float], shape: tuple[int, int],
-    seq, its: int, x_name: str, y_name: str):
+def lyapunov_mp(cd: Tuple[float, float], shape: Tuple[int, int],
+    seq, its: int, x_name: str, y_name: str) -> str:
     """Compute a Lyapunov fractal using arrays backed by shared memory.
 
     cd_out: Tuple that allows the function to be called by Pool.imap containing: 
@@ -407,10 +409,10 @@ def lyapunov_mp(cd: tuple[float, float], shape: tuple[int, int],
 
 @app.function
 def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
-    x: float, y: float, r: float, n: int,
-    cores: int,
-    its: int=100, pal: str='managua', w: int=512, h: int=512):
-    """Yield an animated sequence of Lyapunov images using multiprocessing and SharedMemory.
+    x: float, y: float, r: float, n: int, cores: int, its: int=100,
+    pal: str='managua', w: int=512, h: int=512) -> Generator[npt.NDArray, None, None]:
+    """Yield an animated sequence of Lyapunov images as Numpy arrays using
+    multiprocessing and SharedMemory.
 
     seq: String representing the repeating coefficient sequence, e.g: "AACBABD".
     x_mi, y_mi, x_mx, y_mx: Floats describing the boundaries of the images, the ranges
@@ -436,10 +438,9 @@ def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
     cd_coeff = rot_coeffs(x, y, r, n)
 
     """All the arguments of lyapunov_mp remain constant, except for the C, D coefficients
-    and the name of the output buffer to hold the image. Thus, no large numpy arrays will
-    be serialized when the function is passed to the Pool."""
+    Thus, no large numpy arrays will be serialized when the function is passed to the Pool."""
     lyap = partial(lyapunov_mp,
-        shape=img_shape, seq=seq_vec, its=its, 
+        shape=img_shape, seq=seq_vec, its=its,
         x_name=x_buff.name, y_name=y_buff.name,
     )
 
@@ -461,7 +462,7 @@ def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
 
     for shm in (x_buff, y_buff):
         shm.close()
-        shm.unlink
+        shm.unlink()
 
     # Need to yield something so that the SharedMemory is freed.
     yield None
@@ -469,8 +470,18 @@ def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
 
 @app.function
 def video_seq(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
-    x: float, y: float, r: float, n: int,
-    its: int=100, pal: str='managua', w: int=512, h: int=512):
+    x: float, y: float, r: float, n: int, its: int=100, pal: str='managua',
+    w: int=512, h: int=512) -> Generator[npt.NDArray, None, None]:
+    """Yield an animated sequence of Lyapunov images.
+
+    seq: String representing the repeating coefficient sequence, e.g: "AACBABD".
+    x_mi, y_mi, x_mx, y_mx: Floats describing the boundaries of the images, the ranges
+    of the A and B coefficients.
+    x, y, r: Floats giving the centre and radius of a circle on which the C, D coefficients lie.
+    n: Number of points around the circle, the number of frames.
+    its: Number of iterations for each image.
+    pal: Name of the Matplotlib palette to use.
+    w, h: Image width and height."""
 
     x_coeff, y_coeff = np.meshgrid(
         np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
@@ -487,7 +498,8 @@ def video_seq(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
 
 
 @app.function
-def render_video(fname: str, im_seq, fps: int=30, quiet: bool=True):
+def render_video(fname: str, im_seq: Generator[npt.NDArray, None, None],
+    fps: int=30, quiet: bool=True) -> None:
     """Stream a sequence of .png images to ffmpeg, and turn them into an .mp4 video.
     fname: Filename for the video.
     fps: Frames per second, defaults to 30.
@@ -501,12 +513,12 @@ def render_video(fname: str, im_seq, fps: int=30, quiet: bool=True):
         ffmpeg_out = sp.DEVNULL
     else:
         ffmpeg_out = None
-    proc = sp.Popen(ffmpeg_cmd, stdin=sp.PIPE, stdout=ffmpeg_out, stderr=ffmpeg_out)
-    # Filter the sequence to omit the final "None".
-    for im in filter(None, im_seq):
-        proc.stdin.write(im)
-    proc.stdin.close()
-    proc.wait()
+    with sp.Popen(ffmpeg_cmd, stdin=sp.PIPE, stdout=ffmpeg_out, stderr=ffmpeg_out) as proc:
+        # Filter the sequence to omit the final "None".
+        for im in filter(None, im_seq):
+            proc.stdin.write(im)
+        proc.stdin.close()
+        proc.wait()
 
 
 @app.cell
@@ -527,9 +539,9 @@ def _(MAX_VID_SEQ_CORES, rot_seq_box):
                                                '1080x1080'], value='512x512')
     cores_dropdown = mo.ui.dropdown(
         options=list(map(str, range(1, MAX_VID_SEQ_CORES+1))),
-        value='1', label='cores'                               
+        value='1', label='cores'
     )
-    video_fname = mo.ui.text(value='{}.mp4'.format(rot_seq_box.value))
+    video_fname = mo.ui.text(value=f'{rot_seq_box.value}.mp4')
     do_video = mo.ui.run_button(label='generate video')
     return (
         cores_dropdown,
@@ -635,7 +647,7 @@ def _(DEFAULT_ARGS):
 
         def get_arg(arg):
             return args.get(arg, DEFAULT_ARGS.get(arg))
-        
+
         sq = args.get('seq')
         fname = args.get('fname')
 
@@ -656,9 +668,8 @@ def _(DEFAULT_ARGS):
 
         right_now = datetime.now()
         render_video(fname, img_sq, fps=fps, quiet=False)
-        print('Wrote {} in {}s.'.format(
-            fname, (datetime.now()-right_now).total_seconds()
-        ))
+        elapsed = (datetime.now()-right_now).total_seconds()
+        print(f'Wrote {fname} in {elapsed}s.')
     return
 
 
