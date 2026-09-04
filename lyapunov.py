@@ -46,7 +46,7 @@ def _():
     the $x$ and $y$ coordinates. For a large number of iterations $N$, the Lyapunov
     exponent $\lambda$ is found for each point, and coloured accordingly:
 
-    $$ \Large{\lambda = \dfrac{1}{N}\sum_{n=1}^{N}|r_{n}(1-2x_{n})|} $$
+    $$ \Large{\lambda = \dfrac{1}{N}\sum_{n=1}^{N}\log|r_{n}(1-2x_{n})|} $$
     """)
     return
 

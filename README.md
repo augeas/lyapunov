@@ -11,7 +11,7 @@ example $AABAB$. For each point in an image $A$ and $B$ take the values of
 the $x$ and $y$ coordinates. For a large number of iterations $N$, the Lyapunov
 exponent $\lambda$ is found for each point, and coloured accordingly:
 
-$$ \Large{\lambda = \dfrac{1}{N}\sum_{n=1}^{N}|r_{n}(1-2x_{n})|} $$
+$$ \Large{\lambda = \dfrac{1}{N}\sum_{n=1}^{N}\log|r_{n}(1-2x_{n})|} $$
 
 Code to play with Lyapunov fractals and animate them has been implemented as a [Marimo notebook](https://marimo.io/).
 To experiment with it, either start a [virtualenv](https://docs.python.org/3/library/venv.html),
