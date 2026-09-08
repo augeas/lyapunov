@@ -8,6 +8,7 @@ with app.setup:
     import io
     import itertools
     from functools import partial
+    from multiprocessing import Pool, set_start_method, shared_memory
     import os
     import subprocess as sp
     import sys
@@ -15,11 +16,6 @@ with app.setup:
 
     from matplotlib import colormaps
     import marimo as mo
-    try:
-        from multiprocess import Pool, set_start_method, shared_memory
-    except ModuleNotFoundError:
-        # Can't use mp in WASM anyway...
-        pass
     try:
         import jax.numpy as np
         GOT_JAX = True
