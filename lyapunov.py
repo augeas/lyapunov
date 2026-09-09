@@ -8,7 +8,11 @@ with app.setup:
     import io
     import itertools
     from functools import partial
-    from multiprocessing import Pool, shared_memory
+    try:
+        from multiprocessing import Pool, shared_memory
+    except ModuleNotFoundError:
+        # No shared_memory on WASM
+        pass
     import os
     import subprocess as sp
     import sys
