@@ -8,7 +8,7 @@ with app.setup:
     import io
     import itertools
     from functools import partial
-    from multiprocessing import Pool, set_start_method, shared_memory
+    from multiprocessing import Pool, shared_memory
     import os
     import subprocess as sp
     import sys
@@ -66,7 +66,7 @@ def lyapunov(seq: npt.ArrayLike, n_its: int, *points: List[npt.NDArray]) -> npt.
     coeffs = np.stack(points)[seq]
     seq_len = len(seq)
     img_shape = coeffs.shape[1:3]
-    prev = 0.5 * np.ones(img_shape, dtype=np.float32)
+    prev = 0.5 * np.ones(img_shape, dtype=np.float64)
     img = np.zeros(img_shape)
     for i in range(1, n_its):
         r = coeffs[i % seq_len]
@@ -187,14 +187,14 @@ def _():
 @app.function
 def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
     """Return an array of n pairs of coefficients centred at (x, y) with radius r."""
-    theta = np.linspace(-np.pi, np.pi, n)
+    theta = np.linspace(-np.pi, np.pi, n, dtype=np.float64)
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
     rot = np.array([
         [cos_theta, -sin_theta],
         [sin_theta, cos_theta]
     ]).T.reshape((n, 2, 2))
-    point = np.array([[[0, radius]]], dtype=np.float32)
+    point = np.array([[[0, radius]]], dtype=np.float64)
     return (
         np.array([x, y]).reshape((1, 1, 2)) + point @ rot
     ).reshape(n, 2)
@@ -204,8 +204,8 @@ def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
 def extra_coeffs(point: npt.ArrayLike, shape: Tuple[int, int]) -> Tuple[npt.NDArray, npt.NDArray]:
     """Return two arrays of coefficients with the given shape"""
     c, d = point
-    c_coeff = c * np.ones(shape)
-    d_coeff = d * np.ones(shape)
+    c_coeff = c * np.ones(shape, dtype=np.float32)
+    d_coeff = d * np.ones(shape, dtype=np.float32)
     return (c_coeff, d_coeff)
 
 
@@ -353,11 +353,11 @@ def _(
 
 
 @app.function
-def get_shared_np(shape: Tuple[int, ...], dtype: str='float32',
+def get_shared_np(shape: Tuple[int, ...], dtype: str='float64',
     name: str=None) -> Tuple[shared_memory.SharedMemory, npt.ArrayLike]:
     """Return a SharedMemory instance, and a numpy array of the given
     shape and dtype that points to it. If name is given, retrieve an
-    existing SharedMemort object."""
+    existing SharedMemory object."""
     dtype = np.dtype(dtype)
     size = dtype.itemsize * np.prod(np.array(shape))
     if name is None:
@@ -370,11 +370,9 @@ def get_shared_np(shape: Tuple[int, ...], dtype: str='float32',
 
 @app.function
 def array_to_shared(arr: npt.ArrayLike) -> shared_memory.SharedMemory:
-    """Return a SharedMemory instance that points to a given numpy array"""
-    raw = arr.tobytes()
-    size = len(raw)
-    buff = shared_memory.SharedMemory(create=True, size=size)
-    buff.buf[:size] = raw
+    """Return a SharedMemory instance that points to a given numpy array""" 
+    buff = shared_memory.SharedMemory(create=True, size=arr.nbytes)
+    buff.buf[:] = arr.tobytes()
     return buff
 
 
@@ -395,7 +393,7 @@ def lyapunov_mp(cd: Tuple[float, float], shape: Tuple[int, int],
     y_buff, y_coeff = get_shared_np(shape, name=y_name)
     c_coeff, d_coeff = extra_coeffs(cd, shape)
     # Don't use the "render_image" function, keep the sigmoid function inside the Pool:
-    out_buff = array_to_shared (sigmoid(
+    out_buff = array_to_shared(sigmoid(
         lyapunov(seq, its, x_coeff, y_coeff, c_coeff, d_coeff)
     ))
     for buff in (x_buff, y_buff, out_buff):
@@ -423,11 +421,12 @@ def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
     """
 
     img_shape = (h, w)
-    chunk_size = 16 * cores
+    chunk_size = 8 * cores
 
     # Reserve SharedMemory for the A, B coefficients:
     x_buff, y_buff = map(array_to_shared, np.meshgrid(
-        np.linspace(x_mi, x_mx, w), np.linspace(y_mx, y_mi, h),
+        np.linspace(x_mi, x_mx, w, dtype=np.float64),
+        np.linspace(y_mx, y_mi, h, dtype=np.float64),
     indexing='xy'))
 
     seq_vec = seq_vector(seq)
