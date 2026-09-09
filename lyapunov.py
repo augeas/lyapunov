@@ -66,7 +66,7 @@ def lyapunov(seq: npt.ArrayLike, n_its: int, *points: List[npt.NDArray]) -> npt.
     coeffs = np.stack(points)[seq]
     seq_len = len(seq)
     img_shape = coeffs.shape[1:3]
-    prev = 0.5 * np.ones(img_shape, dtype=np.float64)
+    prev = 0.5 * np.ones(img_shape, dtype=np.float32)
     img = np.zeros(img_shape)
     for i in range(1, n_its):
         r = coeffs[i % seq_len]
@@ -187,14 +187,14 @@ def _():
 @app.function
 def rot_coeffs(x: float, y: float, radius: float, n: int) -> npt.NDArray:
     """Return an array of n pairs of coefficients centred at (x, y) with radius r."""
-    theta = np.linspace(-np.pi, np.pi, n, dtype=np.float64)
+    theta = np.linspace(-np.pi, np.pi, n, dtype=np.float32)
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
     rot = np.array([
         [cos_theta, -sin_theta],
         [sin_theta, cos_theta]
     ]).T.reshape((n, 2, 2))
-    point = np.array([[[0, radius]]], dtype=np.float64)
+    point = np.array([[[0, radius]]], dtype=np.float32)
     return (
         np.array([x, y]).reshape((1, 1, 2)) + point @ rot
     ).reshape(n, 2)
@@ -353,7 +353,7 @@ def _(
 
 
 @app.function
-def get_shared_np(shape: Tuple[int, ...], dtype: str='float64',
+def get_shared_np(shape: Tuple[int, ...], dtype: str='float32',
     name: str=None) -> Tuple[shared_memory.SharedMemory, npt.ArrayLike]:
     """Return a SharedMemory instance, and a numpy array of the given
     shape and dtype that points to it. If name is given, retrieve an
@@ -395,7 +395,7 @@ def lyapunov_mp(cd: Tuple[float, float], shape: Tuple[int, int],
     # Don't use the "render_image" function, keep the sigmoid function inside the Pool:
     out_buff = array_to_shared(sigmoid(
         lyapunov(seq, its, x_coeff, y_coeff, c_coeff, d_coeff)
-    ))
+    ).astype(np.float32))
     for buff in (x_buff, y_buff, out_buff):
         buff.close()
     return out_buff.name
@@ -425,8 +425,8 @@ def video_seq_mp(seq: str, x_mi: float, x_mx: float, y_mi: float, y_mx: float,
 
     # Reserve SharedMemory for the A, B coefficients:
     x_buff, y_buff = map(array_to_shared, np.meshgrid(
-        np.linspace(x_mi, x_mx, w, dtype=np.float64),
-        np.linspace(y_mx, y_mi, h, dtype=np.float64),
+        np.linspace(x_mi, x_mx, w, dtype=np.float32),
+        np.linspace(y_mx, y_mi, h, dtype=np.float32),
     indexing='xy'))
 
     seq_vec = seq_vector(seq)
